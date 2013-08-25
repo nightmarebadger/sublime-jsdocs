@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 """
 DocBlockr v2.11.6
 by Nick Fisher
@@ -64,6 +67,22 @@ def getParser(view):
         return JsdocsObjC(viewSettings)
     elif sourceLang == 'java' or sourceLang == 'groovy':
         return JsdocsJava(viewSettings)
+    elif sourceLang == 'python':
+        point = view.sel()[0].end()
+        line = view.substr(view.line(point))
+        # If we are inside the right comment block, return the Python parser
+        if ((
+                ("string.quoted.single.block.python" in scope and
+                    line.endswith("'''"))
+                or
+                ("string.quoted.double.block.python" in scope and
+                    line.endswith('"""'))
+            )
+            and
+            "punctuation.definition.string.end.python" not in scope):
+            return JsdocsPython(view, viewSettings)
+        # If not, return None (which will just write a new line)
+        return
     return JsdocsJavascript(viewSettings)
 
 
@@ -72,6 +91,10 @@ class JsdocsCommand(sublime_plugin.TextCommand):
     def run(self, edit, inline=False):
 
         self.initialize(self.view, inline)
+
+        if not self.parser:
+            write(self.view, "\n")
+            return
 
         if self.parser.isExistingComment(self.line):
             write(self.view, "\n *" + self.indentSpaces)
@@ -99,14 +122,21 @@ class JsdocsCommand(sublime_plugin.TextCommand):
         self.trailingString = escape(re.sub('\\s*\\*\\/\\s*$', '', self.trailingString))
 
         self.indentSpaces = " " * max(0, self.settings.get("jsdocs_indentation_spaces", 1))
-        self.prefix = "*"
 
         settingsAlignTags = self.settings.get("jsdocs_align_tags", 'deep')
         self.deepAlignTags = settingsAlignTags == 'deep'
         self.shallowAlignTags = settingsAlignTags in ('shallow', True)
 
         self.parser = parser = getParser(v)
+        if not self.parser:
+            return
         parser.inline = inline
+
+
+        try:
+            self.prefix = self.parser.settings['prefix']
+        except KeyError:
+            self.prefix = "*"
 
         # use trailing string as a description of the function
         if self.trailingString:
@@ -1088,6 +1118,142 @@ class JsdocsJava(JsdocsParser):
                 definition = re.sub(r'\s*[;{]\s*$', '', definition)
                 break
         return definition
+
+
+
+
+
+
+
+
+
+class JsdocsPython(JsdocsParser):
+    def __init__(self, view, args, **kwargs):
+        self.view = view
+        super(JsdocsPython, self).__init__(args, **kwargs);
+
+    def setupSettings(self):
+
+        identifier = '[a-zA-Z_$][a-zA-Z_$0-9]*'
+
+
+        # Extend __init__ to get the view, get the scope and find out if we're
+        # on double or single block quotes
+
+        scope = self.view.scope_name(self.view.sel()[0].end())
+        commentCloser = '"""'
+        if "string.quoted.single.block.python" in scope:
+            commentCloser = "'''"
+        elif "string.quoted.double.block.python" in scope:
+            commentCloser = '"""'
+
+
+
+        self.settings = {
+            # curly brackets around the type information
+            "curlyTypes": True,
+            'typeInfo': True,
+            "typeTag": self.viewSettings.get('jsdocs_override_js_var') or "type",
+            # technically, they can contain all sorts of unicode, but w/e
+            "varIdentifier": identifier,
+            "fnIdentifier":  identifier,
+            "fnOpener": r'function(?:\s+' + identifier + r')?\s*\(',
+            "commentCloser": commentCloser,
+            "bool": "Boolean",
+            "function": "Function",
+            "prefix": ""
+        }
+
+
+    def isExistingComment(self, line):
+        return re.search('^\\s*\\*', line)
+
+    def parseFunction(self, line):
+        res = re.search(
+            #   fnName = function,  fnName : function
+            r'(?:(?P<name1>' + self.settings['varIdentifier'] + r')\s*[:=]\s*)?'
+            + 'function'
+            # function fnName
+            + r'(?:\s+(?P<name2>' + self.settings['fnIdentifier'] + '))?'
+            # (arg1, arg2)
+            + r'\s*\(\s*(?P<args>.*)\)',
+            line
+        )
+        if not res:
+            return None
+
+        # grab the name out of "name1 = function name2(foo)" preferring name1
+        name = res.group('name1') or res.group('name2') or ''
+        args = res.group('args')
+
+        return (name, args, None)
+
+    def parseVar(self, line):
+        res = re.search(
+            #   var foo = blah,
+            #       foo = blah;
+            #   baz.foo = blah;
+            #   baz = {
+            #        foo : blah
+            #   }
+
+            '(?P<name>' + self.settings['varIdentifier'] + ')\s*[=:]\s*(?P<val>.*?)(?:[;,]|$)',
+            line
+        )
+        if not res:
+            return None
+
+        return (res.group('name'), res.group('val').strip())
+
+
+    def parse(self, line):
+        print(line)
+
+
+    def getDefinition(self, view, pos):
+        """
+        get a relevant definition starting at the given point
+        returns string
+        """
+        # As the function is called with the next line, we need to go back by
+        # 1 to be at the end of comment opening line. After this, we look 1
+        # line up for the definition.
+        # If it matches a function or class definition, return it
+
+        pos -= 1
+        startprevious = view.line(pos).begin() - 1
+        line = view.substr(view.line(startprevious)).strip()
+
+        if line.startswith("def"):
+            print("function call!")
+            # Return line without starting def and ending :
+            return line[3:-1].strip()
+        elif line.startswith("class"):
+            print("class call!")
+            # Look down till you find the __init__ function and get the info
+            # from there
+
+        return ''
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ############################################################33
 
