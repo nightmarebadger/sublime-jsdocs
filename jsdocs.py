@@ -106,7 +106,10 @@ class JsdocsCommand(sublime_plugin.TextCommand):
         # match against a function declaration.
         out = self.parser.parse(self.line)
 
-        snippet = self.generateSnippet(out, inline)
+        if isinstance(self.parser, JsdocsPython):
+            snippet = self.parser.generateSnippet(out)
+        else:
+            snippet = self.generateSnippet(out, inline)
 
         write(self.view, snippet)
 
@@ -1166,49 +1169,81 @@ class JsdocsPython(JsdocsParser):
 
 
     def isExistingComment(self, line):
-        return re.search('^\\s*\\*', line)
-
-    def parseFunction(self, line):
-        res = re.search(
-            #   fnName = function,  fnName : function
-            r'(?:(?P<name1>' + self.settings['varIdentifier'] + r')\s*[:=]\s*)?'
-            + 'function'
-            # function fnName
-            + r'(?:\s+(?P<name2>' + self.settings['fnIdentifier'] + '))?'
-            # (arg1, arg2)
-            + r'\s*\(\s*(?P<args>.*)\)',
-            line
-        )
-        if not res:
-            return None
-
-        # grab the name out of "name1 = function name2(foo)" preferring name1
-        name = res.group('name1') or res.group('name2') or ''
-        args = res.group('args')
-
-        return (name, args, None)
-
-    def parseVar(self, line):
-        res = re.search(
-            #   var foo = blah,
-            #       foo = blah;
-            #   baz.foo = blah;
-            #   baz = {
-            #        foo : blah
-            #   }
-
-            '(?P<name>' + self.settings['varIdentifier'] + ')\s*[=:]\s*(?P<val>.*?)(?:[;,]|$)',
-            line
-        )
-        if not res:
-            return None
-
-        return (res.group('name'), res.group('val').strip())
-
+        return False
 
     def parse(self, line):
-        print(line)
+        if line[0] == 'function':
+            lin = line[1]
+            opening_bracket = lin.find('(')
+            name = lin[:opening_bracket].strip()
+            arguments = lin[opening_bracket+1:-1].split(',')
+            args = []
+            kwargs = []
+            longest_name = 0
 
+            for arg in arguments:
+                if arg == 'self':
+                    continue
+                elif '=' not in arg:
+                    tmparg = arg.strip()
+                    longest_name = max(longest_name, len(tmparg))
+                    args.append(tmparg)
+                else:
+                    kwarg = arg.split('=')
+                    tmparg = kwarg[0].strip()
+                    longest_name = max(longest_name, len(tmparg))
+                    kwargs.append((tmparg, kwarg[1].strip()))
+
+            return{
+                'name': name,
+                'args': args,
+                'kwargs': kwargs,
+                'longest_name': longest_name
+                }
+
+        return
+
+
+    def generateSnippet(self, out):
+        snippet = '\n'
+        count = 1
+        if out:
+            snippet += "${{{0}:[{1} description]}}".format(count, out['name'])
+            count += 1
+
+            if out['args'] or out['kwargs']:
+                snippet += "\n"
+
+            if out['args']:
+                for arg in out['args']:
+                    snippet += "\n:param    {1}: {2}${{{0}:[{1} description]}}".format(
+                        count, arg, " "*(out['longest_name'] - len(arg)))
+                    count += 1
+                    snippet += "\n:type     {1}: {2}${{{0}:[{1} type]}}".format(
+                        count, arg, " "*(out['longest_name'] - len(arg)))
+                    count += 1
+
+            if out['kwargs']:
+                for arg in out['kwargs']:
+                    snippet += "\n:param    {1}: {2}${{{0}:[{1} description]}}".format(
+                        count, arg[0], " "*(out['longest_name'] - len(arg[0])))
+                    count += 1
+                    snippet += "\n:type     {1}: {2}${{{0}:[{1} type]}}".format(
+                        count, arg[0], " "*(out['longest_name'] - len(arg[0])))
+                    count += 1
+
+            snippet += "\n"
+            snippet += "\n:returns: ${{{0}:[return description]}}".format(
+                count)
+            count += 1
+            snippet += "\n:rtype:   ${{{0}:[return type]}}".format(
+                count,)
+            count += 1
+
+
+
+        snippet += '\n' + self.settings['commentCloser']
+        return snippet
 
     def getDefinition(self, view, pos):
         """
@@ -1227,13 +1262,13 @@ class JsdocsPython(JsdocsParser):
         if line.startswith("def"):
             print("function call!")
             # Return line without starting def and ending :
-            return line[3:-1].strip()
+            return ('function', line[3:-1].strip())
         elif line.startswith("class"):
             print("class call!")
             # Look down till you find the __init__ function and get the info
             # from there
 
-        return ''
+        return ('', '')
 
 
 
