@@ -1177,6 +1177,10 @@ class JsdocsPython(JsdocsParser):
             opening_bracket = lin.find('(')
             name = lin[:opening_bracket].strip()
             arguments = lin[opening_bracket+1:-1].split(',')
+
+            if arguments == ['']:
+                arguments = []
+
             args = []
             kwargs = []
             longest_name = 0
@@ -1194,12 +1198,27 @@ class JsdocsPython(JsdocsParser):
                     longest_name = max(longest_name, len(tmparg))
                     kwargs.append((tmparg, kwarg[1].strip()))
 
-            return{
+            return {
                 'name': name,
                 'args': args,
                 'kwargs': kwargs,
-                'longest_name': longest_name
+                'longest_name': longest_name,
+                'return': True
                 }
+
+        if line[0] == 'class':
+            lin = line[1]
+            opening_bracket = lin.find('(')
+            if opening_bracket == -1:
+                name = lin.split()[-1].strip()
+            else:
+                name = lin[:opening_bracket].strip()
+            return {
+                'name': name,
+                'args': [],
+                'kwargs': [],
+                'return': False
+            }
 
         return
 
@@ -1232,13 +1251,14 @@ class JsdocsPython(JsdocsParser):
                         count, arg[0], " "*(out['longest_name'] - len(arg[0])))
                     count += 1
 
-            snippet += "\n"
-            snippet += "\n:returns: ${{{0}:[return description]}}".format(
-                count)
-            count += 1
-            snippet += "\n:rtype:   ${{{0}:[return type]}}".format(
-                count,)
-            count += 1
+            if out['return']:
+                snippet += "\n"
+                snippet += "\n:returns: ${{{0}:[return description]}}".format(
+                    count)
+                count += 1
+                snippet += "\n:rtype:   ${{{0}:[return type]}}".format(
+                    count,)
+                count += 1
 
 
 
@@ -1260,11 +1280,10 @@ class JsdocsPython(JsdocsParser):
         line = view.substr(view.line(startprevious)).strip()
 
         if line.startswith("def"):
-            print("function call!")
             # Return line without starting def and ending :
             return ('function', line[3:-1].strip())
         elif line.startswith("class"):
-            print("class call!")
+            return ('class', line[5:-1].strip())
             # Look down till you find the __init__ function and get the info
             # from there
 
